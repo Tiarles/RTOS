@@ -150,8 +150,6 @@ int main(int argc, char *argv[]) {
     
     pthread_t t;
     
-    printf("Hello World!");
-    
     sigemptyset (&alarm_sig);
 	for (i = SIGRTMIN; i <= SIGRTMAX; i++)
 		sigaddset (&alarm_sig, i);
