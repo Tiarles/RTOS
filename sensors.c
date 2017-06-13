@@ -34,7 +34,7 @@ static void *readGeolocalizationSensor (void *arg)
     return NULL;
 }
 
-static void *readPressionSensor (void *arg)       // By Tiarles
+static void *readPressionSensor (void *arg)
 {
     struct periodic_info info;
 
