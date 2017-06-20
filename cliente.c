@@ -21,184 +21,293 @@
 #include <errno.h>
 #include <time.h>
 
-#include "periodic.h"
+#define SIZE_A 9            // Neste periodo, pode escrever em até 10 posições (9 para fazer travá-lo)
+#define SIZE_B 4            // Neste periodo, pode escrever em até 5 posições  (4 para fazer travá-lo)
 
-/**
-    \def SIZE Tamanho do buffer que se comunica com o socket.
-    \def NEXTPOS_PROD Macro que calcula a próxima posição
-                      em forma de buffer circular do produtor.
-    \def NEXTPOS_CONS Macro que calcula a próxima posição
-                      em forma de buffer circular do consumidor. 
-**/
-
-#define SIZE 20 
 #define NEXTPOS_PROD (posProdutor   + 1) % SIZE
 #define NEXTPOS_CONS (posConsumidor + 1) % SIZE
 
-#define NEXT_TEMPCOUNT (_TemperatureSensor_count + 1) % 10
-#define NEXT_GEOLCOUNT (_GeolocalizationSensor_count + 1) % 10
-#define NEXT_PRESCOUNT (_PressionSensor_count + 1) % 10
+struct periodic_info
+{
+	int sig;
+	sigset_t alarm_sig;
+};
 
-/**
-    \struct DataBuffer É o tipo de dado que vai ser lido e 
-                       escrito do e no buffer de comunicação.
-**/
+int posProdutor = 0;
+int tamanhoA    = 0;
+int tamanhoB    = 0;
 
-typedef struct{
-    float dado;
-} DataBuffer;
+int dataRandom[] = { 0,  1,  2,  3,  4,\
+                     5,  6,  7,  8,  9,\
+                    10, 11, 12, 13, 14,\
+                    15, 16, 17, 18, 19,\
+                    20, 21, 22, 23, 24,\
+                    25, 26, 27, 28, 29,\
+                    30, 31, 32, 33, 34,\
+                    35, 36, 37, 38, 39,\
+                    40, 41, 42, 43, 44,\
+                    45, 46, 47, 48, 49};
 
-/**
-    \brief Variáveis Globais
-    \var posProdutor 
-    \var posConsumidor 
-    \var tamanhoAtual  
-**/
+int filaA[SIZE_A];
+int filaB[SIZE_B];
 
-int posProdutor   = 0;
-int posConsumidor = 0;
-int tamanhoAtual  = 0;
+int sockfd;
 
-// END DOXYGEN - END DOXYGEN - END DOXYGEN - END DOXYGEN - END DOXYGEN
+pthread_mutex_t m_fila = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t  c_fila = PTHREAD_COND_INITIALIZER;
 
-// Dados que o sensor estaria recebendo
-DataBuffer dataTemperature[]     = {10.0, 10.1, 10.2, 10.3, 10.4,\
-                                    10.5, 10.6, 10.7, 10.8, 10.9};
-DataBuffer dataGeolocalization[] = {20.0, 20.1, 20.2, 20.3, 20.4,\
-                                    20.5, 20.6, 20.7, 20.8, 20.9};
-DataBuffer dataPression[]        = {30.0, 30.1, 30.2, 30.3, 30.4,\
-                                    30.5, 30.6, 30.7, 30.8, 30.9};
+static int make_periodic (int unsigned period, struct periodic_info *info)
+{
+    static int next_sig;
+    int ret;
+    unsigned int ns;
+    unsigned int sec;
+    struct sigevent sigev;
+    timer_t timer_id;
+    struct itimerspec itval;
 
-DataBuffer buffer[SIZE];
+    /* Initialise next_sig first time through. We can't use static
+       initialisation because SIGRTMIN is a function call, not a constant */
+    if (next_sig == 0)
+        next_sig = SIGRTMIN;
+    /* Check that we have not run out of signals */
+    if (next_sig > SIGRTMAX)
+        return -1;
+    
+    //printf("TEMP(make_periodic) %d\n", next_sig); // By Tiarles
+    
+    info->sig = next_sig;
+    next_sig++;
+    /* Create the signal mask that will be used in wait_period */
+    sigemptyset (&(info->alarm_sig));
+    sigaddset (&(info->alarm_sig), info->sig);
 
-static int _TemperatureSensor_count     = 0;
-static int _GeolocalizationSensor_count = 0;
-static int _PressionSensor_count        = 0;
+    /* Create a timer that will generate the signal we have chosen */
+    sigev.sigev_notify = SIGEV_SIGNAL;
+    
+    //printf("TEMP(make_periodic) %d\n", SIGEV_SIGNAL); // By Tiarles
+    
+    sigev.sigev_signo = info->sig;
+    sigev.sigev_value.sival_ptr = (void *) &timer_id;
+    ret = timer_create (CLOCK_MONOTONIC, &sigev, &timer_id);
+    if (ret == -1)
+        return ret;
 
-pthread_mutex_t m_buffer = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t  c_buffer = PTHREAD_COND_INITIALIZER;
+    /* Make the timer periodic */
+    sec = period/1000000;
+    ns = (period - (sec * 1000000)) * 1000;
+    
+    //printf("TEMP(make_periodic) %d\n", period); // By Tiarles
+    //printf("TEMP(make_periodic) %d\n", sec); // By Tiarles
+    //printf("TEMP(make_periodic) %d\n", ns); // By Tiarles
+    
+    itval.it_interval.tv_sec = sec;
+    itval.it_interval.tv_nsec = ns;
+    itval.it_value.tv_sec = sec;
+    itval.it_value.tv_nsec = ns;
+    ret = timer_settime (timer_id, 0, &itval, NULL);
+    return ret;
+}
 
-void printBuffer()  //TEMPORÁRIA
+
+static void wait_period (struct periodic_info *info)
+{
+    int sig;
+    sigwait (&(info->alarm_sig), &sig);
+}
+
+void printFila(int* fila, int size)  //TEMPORÁRIA
 {
     int i;    
-    printf("\nBUFFER = [");
+    printf("\nFila = [");
 
-    for(i = 0; i < SIZE - 1; i++)
-        printf("%.1f, ", buffer[i].dado);        
+    for(i = 0; i < size - 1; i++)
+        printf("%d, ", fila[i]);        
     
-    printf("%.1f]\n", buffer[SIZE - 1].dado);
+    printf("%d]\n", fila[size - 1]);
     return;
 }
 
-static void *readTemperatureSensor (void *arg)
+static void *generateDataA(void *arg)
 {
 	struct periodic_info info;
+	
+	printf("Inside generateDataA\n");
 	
 	make_periodic (1000000, &info);
 	while (1)
 	{
-	    pthread_mutex_lock(&m_buffer);
+	    wait_period (&info);
+	
+	    pthread_mutex_lock(&m_fila);
 	    
-	    printf ("Temperature Sensor period 1s\n");
+        printf ("Generate Data A period 1s\n");
 	    
-	    while(tamanhoAtual == SIZE)
-            pthread_cond_wait(&c_buffer, &m_buffer);
+	    while(tamanhoA == SIZE_A)
+            pthread_cond_wait(&c_fila, &m_fila);
 	    
-	    buffer[posProdutor] = dataTemperature[_TemperatureSensor_count];
+	    filaA[posProdutor] = dataRandom[posProdutor % 50];
 		
-		_TemperatureSensor_count = NEXT_TEMPCOUNT;
-		posProdutor = NEXTPOS_PROD;
-		tamanhoAtual++;
+		posProdutor++;
+		tamanhoA++;
 		
-		printBuffer();
+        printFila(filaA, SIZE_A);
 		
-		pthread_cond_signal(&c_buffer);
-        pthread_mutex_unlock(&m_buffer);
-        
-		wait_period (&info);
+		pthread_cond_signal(&c_fila);
+        pthread_mutex_unlock(&m_fila);
 	}
 	return NULL;
 }
 
-static void *readGeolocalizationSensor (void *arg)
+static void *generateDataB(void *arg)       // By Tiarles
 {
 	struct periodic_info info;
+	
+	printf("Inside generateDataB\n");
 	
 	make_periodic (2000000, &info);
 	while (1)
 	{
-	    pthread_mutex_lock(&m_buffer);
+	    wait_period (&info);
 	    
-	    printf ("_Geolocalization Sensor period 2s\n");
+        pthread_mutex_lock(&m_fila);
 	    
-	    while(tamanhoAtual == SIZE)
-            pthread_cond_wait(&c_buffer, &m_buffer);
+        printf ("Generate Data B period 2s\n");   
+	       
+	    while(tamanhoB == SIZE_B)
+            pthread_cond_wait(&c_fila, &m_fila);
 	    
-	    buffer[posProdutor] = dataGeolocalization[_GeolocalizationSensor_count];
+	    filaB[posProdutor] = dataRandom[posProdutor % 50];
 		
-		_GeolocalizationSensor_count = NEXT_GEOLCOUNT;
-		posProdutor = NEXTPOS_PROD;
-		tamanhoAtual++;
+		posProdutor++;
+		tamanhoB++;
 		
-        printBuffer();
+	    printFila(filaB, SIZE_B);
 		
-		pthread_cond_signal(&c_buffer);
-        pthread_mutex_unlock(&m_buffer);
-		
-		wait_period (&info);
+		pthread_cond_signal(&c_fila);
+        pthread_mutex_unlock(&m_fila);
 	}
 	return NULL;
 }
 
-static void *readPressionSensor (void *arg)       // By Tiarles
+static void *passMedianBySocket(void *arg)
 {
-	struct periodic_info info;
 
-	make_periodic (5000000, &info);
+    struct periodic_info info;
+    char str[10];
+    
+   	printf("Inside passMedianBySocket\n");
+    
+	int median_filaA = 0;
+	int median_filaB = 0;
+	int i, n;
+	
+	make_periodic(10000000, &info);
 	while (1)
 	{
-        pthread_mutex_lock(&m_buffer);
+	
+	    wait_period (&info);
 	    
-        printf ("Pression Sensor period 5s\n");   
-	       
-	    while(tamanhoAtual == SIZE)
-            pthread_cond_wait(&c_buffer, &m_buffer);
+        pthread_mutex_lock(&m_fila);
 	    
-	    buffer[posProdutor] = dataPression[_PressionSensor_count];
+        printf ("Send to Socket Data! 10s\n");
+            	    
+	    for(i = 0; i < SIZE_A; i++)
+	        median_filaA += filaA[i];
+	    median_filaA /= SIZE_A;
+
+	    for(i = 0; i < SIZE_B; i++)
+	        median_filaB += filaB[i];
+	    median_filaB /= SIZE_B;
+	    	    	
+	    // Format and send by socket
+
+        sprintf(str, "%d - %d", median_filaA, median_filaB);      	    
+
+	    n = send(sockfd, str, 10, 0);
+        
+        if (n == -1) {
+            printf("Erro escrevendo no socket!\n");
+            return -1;
+        }
 		
-		_PressionSensor_count = NEXT_PRESCOUNT;
-		posProdutor = NEXTPOS_PROD;
-		tamanhoAtual++;
+		tamanhoA = 0;
+		tamanhoB = 0;
+		// Zera as duas filas
 		
-	    printBuffer();
+	    for(i = 0; i < SIZE_A; i++)
+	        filaA[i] = 0;
+
+	    for(i = 0; i < SIZE_B; i++)
+            filaB[i] = 0;		
 		
-		pthread_cond_signal(&c_buffer);
-        pthread_mutex_unlock(&m_buffer);
+	    printFila(filaA, SIZE_A);
+   	    printFila(filaB, SIZE_B);
 		
-		wait_period (&info);
+		pthread_cond_signal(&c_fila);
+        pthread_mutex_unlock(&m_fila);
 	}
 	return NULL;
+	
+
+   
+    close(sockfd);
 }
 
 int main(int argc, char *argv[]) {
     
-    pthread_t t_1;  // Sensores
+    printf("Inside main!\n");
+     
+    pthread_t t_1;
 	pthread_t t_2;
 	pthread_t t_3;
     
+    int portno = 3000;           // portno já configurado. 3000
     int i;
+    struct sockaddr_in serv_addr;
    
     sigset_t alarm_sig;
     sigemptyset (&alarm_sig);
-
+   
+    printf("Inside main 2\n");
+   
 	for (i = SIGRTMIN; i <= SIGRTMAX; i++)
 		sigaddset (&alarm_sig, i);
 	
     sigprocmask (SIG_BLOCK, &alarm_sig, NULL);
 	
-	pthread_create (&t_1, NULL, readTemperatureSensor, NULL);
-	pthread_create (&t_2, NULL, readGeolocalizationSensor, NULL);
-	pthread_create (&t_3, NULL, readPressionSensor, NULL);
+	// Socket AREA
+
+    printf("Inside main 3\n");
+    
+	sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        printf("Erro criando socket!\n");
+        return -1;
+    }
+	
+    printf("Inside main 4\n");
+	
+	bzero((char *) &serv_addr, sizeof(serv_addr));
+
+    printf("Inside main 5\n");
+
+    serv_addr.sin_family        = AF_INET;
+    inet_aton(argv[1], &serv_addr.sin_addr);                // AviaoNome
+    serv_addr.sin_port          = htons(portno);
+
+    printf("Inside main 6\n");
+    
+    if(connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0) {
+        printf("Erro conectando!\n");
+        return -1;
+    }
+    
+
+    
+	pthread_create (&t_1, NULL, generateDataA,      NULL);
+	pthread_create (&t_2, NULL, generateDataB,      NULL);
+    pthread_create (&t_3, NULL, passMedianBySocket, NULL);
 
     pthread_join(&t_1, NULL);
     pthread_join(&t_2, NULL);
