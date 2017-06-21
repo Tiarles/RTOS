@@ -13,12 +13,12 @@ int id = 0;
 void *cliente(void *arg) {
     int cid = (int)arg;
     int i, n;
-    char buffer[256];
+    char buffer[10];
     
     while (1) {
         bzero(buffer,sizeof(buffer));
         
-        n = read(newsockfd[cid],buffer,50);
+        n = read(newsockfd[cid], buffer, 10);
         
         printf("Recebeu: %s\n", buffer, strlen(buffer));
          
@@ -26,15 +26,6 @@ void *cliente(void *arg) {
              printf("Erro lendo do socket!\n");
              exit(1);
         }
-        for (i = 0;i < id; i++) {
-		    if (i != cid) { 
-           		n = write(newsockfd[i],buffer,50);
-           		if (n < 0) {
-           			printf("Erro escrevendo no socket!\n");
-           			exit(1);
-           		}
-		    }
-    	}
     }
 }
 
@@ -43,7 +34,7 @@ int main(int argc, char *argv[]) {
     socklen_t clilen;
 
     int sockfd;
-    int portno = 3000;
+    int portno = atoi(argv[1]);
 
     pthread_t t;
      

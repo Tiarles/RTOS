@@ -146,7 +146,7 @@ static void *generateDataA(void *arg)
 	    while(tamanhoA == SIZE_A)
             pthread_cond_wait(&c_fila, &m_fila);
 	    
-	    filaA[posProdutor] = dataRandom[posProdutor % 50];
+	    filaA[tamanhoA] = dataRandom[posProdutor % 50];
 		
 		posProdutor++;
 		tamanhoA++;
@@ -177,7 +177,7 @@ static void *generateDataB(void *arg)       // By Tiarles
 	    while(tamanhoB == SIZE_B)
             pthread_cond_wait(&c_fila, &m_fila);
 	    
-	    filaB[posProdutor] = dataRandom[posProdutor % 50];
+	    filaB[tamanhoB] = dataRandom[posProdutor % 50];
 		
 		posProdutor++;
 		tamanhoB++;
@@ -201,7 +201,6 @@ static void *passMedianBySocket(void *arg)
 	int median_filaA = 0;
 	int median_filaB = 0;
 	int i, n;
-	
 	make_periodic(10000000, &info);
 	while (1)
 	{
@@ -262,7 +261,7 @@ int main(int argc, char *argv[]) {
 	pthread_t t_2;
 	pthread_t t_3;
     
-    int portno = 3000;           // portno já configurado. 3000
+    int portno = atoi(argv[2]);           // portno já configurado. 3000
     int i;
     struct sockaddr_in serv_addr;
    
@@ -298,12 +297,10 @@ int main(int argc, char *argv[]) {
 
     printf("Inside main 6\n");
     
-    if(connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0) {
+    if(connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
         printf("Erro conectando!\n");
         return -1;
     }
-    
-
     
 	pthread_create (&t_1, NULL, generateDataA,      NULL);
 	pthread_create (&t_2, NULL, generateDataB,      NULL);
